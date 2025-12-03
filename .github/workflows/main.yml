@@ -86,11 +86,11 @@ jobs:
       - name: Maintain Connection & Auto-Restart
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GH_TOKEN: ${{ secrets.GH_PAT }}    # <--- AQUI ESTÁ A MUDANÇA MÁGICA
           repo_ref: ${{ github.ref_name }}
-          workflow_id: "main.yml"
+          workflow_id: "name_ RDP.txt"       # Garanta que o nome do arquivo seja esse mesmo
         run: |
-          # Webhook Inicial
+          # Notificação Inicial
           $payload = @{
               username = "GitHub VPS Bot"
               embeds = @(
@@ -117,6 +117,7 @@ jobs:
               $currentTime = Get-Date
               $elapsed = $currentTime - $startTime
               
+              # Verifica se passou de 355 minutos
               if ($elapsed.TotalMinutes -ge 355) {
                   Write-Host "⚠️ Tempo limite. Reiniciando..."
                   
@@ -125,14 +126,15 @@ jobs:
                       embeds = @(
                           @{
                               title = "🔄 Reinicialização Automática"
-                              description = "Ciclo de 6h concluído. Solicitando nova máquina..."
+                              description = "Ciclo de 6h concluído. Solicitando nova máquina via PAT..."
                               color = 16776960
                           }
                       )
                   } | ConvertTo-Json -Depth 4
                   try { Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' -Body $rebootPayload } catch {}
 
-                  try { gh workflow run $env:workflow_id --ref $env:repo_ref } catch { Write-Error "Falha ao reiniciar." }
+                  # Aciona o reinício usando o Token Pessoal
+                  try { gh workflow run $env:workflow_id --ref $env:repo_ref } catch { Write-Error "Falha ao reiniciar: $_" }
                   
                   Start-Sleep -Seconds 60
                   break
