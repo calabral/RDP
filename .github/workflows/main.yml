@@ -104,7 +104,7 @@ jobs:
                       fields = @(
                           @{
                               name = "🌐 IP Address (Tailscale)"
-                              value = "`$env:TAILSCALE_IP"
+                              value = "$env:TAILSCALE_IP"
                               inline = $true
                           },
                           @{
