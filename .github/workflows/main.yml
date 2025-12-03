@@ -3,26 +3,23 @@ name: RDP
 on:
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360 # Definido para 6 horas (limite máximo dos runners do GitHub)
+    timeout-minutes: 360
     
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove any existing rule with the same name to avoid duplication
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          
-          # Allow any incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-
-          # Restart the Remote Desktop service
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Secure Password
@@ -45,7 +42,6 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           
-          # Salva a senha no ambiente (seguro, não aparece no log do console)
           echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
           
           if (-not (Get-LocalUser -Name "RDP")) {
@@ -57,7 +53,6 @@ jobs:
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-          
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
@@ -87,55 +82,79 @@ jobs:
               Write-Error "TCP connection to RDP port 3389 failed"
               exit 1
           }
-          Write-Host "TCP connectivity successful!"
 
-      - name: Maintain Connection & Send to Discord
+      - name: Maintain Connection & Auto-Restart
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          repo_ref: ${{ github.ref_name }}
+          workflow_id: "name_ RDP.txt"
         run: |
-          # Monta o Payload (Visual Bonito com Embeds)
+          # Webhook Inicial
           $payload = @{
               username = "GitHub VPS Bot"
               embeds = @(
                   @{
-                      title = "🖥️ Nova Sessão RDP Iniciada"
-                      description = "Sua VPS está pronta para conexão."
-                      color = 65280 # Cor Verde Decimal
+                      title = "🟢 Sessão Iniciada"
+                      description = "Nova máquina alocada. Temporizador de 6h iniciado."
+                      color = 65280
                       fields = @(
-                          @{
-                              name = "🌐 IP Address (Tailscale)"
-                              value = "$env:TAILSCALE_IP"
-                              inline = $true
-                          },
-                          @{
-                              name = "👤 Username"
-                              value = "RDP"
-                              inline = $true
-                          },
-                          @{
-                              name = "🔑 Password"
-                              value = "||$env:RDP_PASSWORD||" # Formato Spoiler do Discord
-                              inline = $false
-                          }
+                          @{ name = "🌐 IP"; value = "$env:TAILSCALE_IP"; inline = $true },
+                          @{ name = "👤 User"; value = "RDP"; inline = $true },
+                          @{ name = "🔑 Pass"; value = "||$env:RDP_PASSWORD||"; inline = $false }
                       )
-                      footer = @{
-                          text = "Executando em GitHub Actions"
-                      }
                       timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
                   }
               )
           } | ConvertTo-Json -Depth 4
+          try { Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' -Body $payload } catch {}
 
-          # Envia para o Discord usando o Segredo
-          try {
-              Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' -Body $payload
-              Write-Host "Dados enviados para o Discord com sucesso!"
-          } catch {
-              Write-Error "Falha ao enviar dados para o Discord. Verifique se o Secret DISCORD_WEBHOOK foi criado corretamente."
-              Write-Error $_
-          }
+          # Monitoramento
+          $startTime = Get-Date
+          Write-Host "Monitoramento iniciado..."
           
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Runner is alive..."
-              Start-Sleep -Seconds 300
+              $currentTime = Get-Date
+              $elapsed = $currentTime - $startTime
+              
+              if ($elapsed.TotalMinutes -ge 355) {
+                  Write-Host "⚠️ Tempo limite. Reiniciando..."
+                  
+                  $rebootPayload = @{
+                      username = "GitHub VPS Bot"
+                      embeds = @(
+                          @{
+                              title = "🔄 Reinicialização Automática"
+                              description = "Ciclo de 6h concluído. Solicitando nova máquina..."
+                              color = 16776960
+                          }
+                      )
+                  } | ConvertTo-Json -Depth 4
+                  try { Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' -Body $rebootPayload } catch {}
+
+                  try { gh workflow run $env:workflow_id --ref $env:repo_ref } catch { Write-Error "Falha ao reiniciar." }
+                  
+                  Start-Sleep -Seconds 60
+                  break
+              }
+              Write-Host "[$(Get-Date)] Ativo..."
+              Start-Sleep -Seconds 60
           }
+
+      - name: Notify Session End
+        if: always()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          $payload = @{
+              username = "GitHub VPS Bot"
+              embeds = @(
+                  @{
+                      title = "🔴 Sessão Encerrada"
+                      description = "Máquina desligada."
+                      color = 16711680
+                      timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                  }
+              )
+          } | ConvertTo-Json -Depth 4
+          try { Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' -Body $payload } catch {}
