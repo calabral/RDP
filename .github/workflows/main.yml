@@ -88,7 +88,7 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
           repo_ref: ${{ github.ref_name }}
-          workflow_id: "name_ RDP.txt"
+          workflow_id: "main.yml"
         run: |
           # Webhook Inicial
           $payload = @{
