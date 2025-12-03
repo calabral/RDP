@@ -135,7 +135,6 @@ jobs:
               Write-Error $_
           }
           
-          # Loop infinit para manter a máquina viva
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Runner is alive..."
               Start-Sleep -Seconds 300
